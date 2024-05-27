@@ -1,23 +1,350 @@
-import logo from './logo.svg';
+import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
 
 function App() {
+  const [originalImage, setOriginalImage] = useState(null);
+  const [processedImage, setProcessedImage] = useState(null);
+  const [activeTab, setActiveTab] = useState('image-tab');
+  const [isOriginalEnlarged, setIsOriginalEnlarged] = useState(false);
+  const [isProcessedEnlarged, setIsProcessedEnlarged] = useState(false);
+  const [greenThreshold, setGreenThreshold] = useState(100);
+  const [greenDifference, setGreenDifference] = useState(20);
+  const [pinkLevel, setPinkLevel] = useState(221);
+  const [saturation, setSaturation] = useState(100);
+  const [brightness, setBrightness] = useState(100);
+  const [adjustSaturation, setAdjustSaturation] = useState(false);
+  const [adjustBrightness, setAdjustBrightness] = useState(false);
+  const [inputThreshold, setInputThreshold] = useState(greenThreshold);
+  const [inputDifference, setInputDifference] = useState(greenDifference);
+  const [inputPinkLevel, setInputPinkLevel] = useState(pinkLevel);
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    if (originalImage) {
+      convertGreenToPink();
+    }
+  }, [greenThreshold, greenDifference, pinkLevel, originalImage]);
+
+  useEffect(() => {
+    applyFilters();
+  }, [adjustSaturation, adjustBrightness, saturation, brightness]);
+
+  const handleImageUpload = (event) => {
+    const file = event.target.files[0];
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setOriginalImage(e.target.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const convertGreenToPink = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const image = new Image();
+    image.src = originalImage;
+    image.onload = () => {
+      processImage(canvas, ctx, image);
+    };
+  };
+
+  const processImage = (canvas, ctx, image) => {
+    canvas.width = image.width;
+    canvas.height = image.height;
+    ctx.drawImage(image, 0, 0);
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+
+    const targetPink = { r: 254, g: 167, b: pinkLevel };
+
+    const clusters = findGreenClusters(data, canvas.width, canvas.height);
+    clusters.forEach((cluster) => {
+      const [dr, dg, db] = getDominantColor(cluster, data);
+
+      cluster.forEach((index) => {
+        const r = data[index];
+        const g = data[index + 1];
+        const b = data[index + 2];
+
+        if (isGreen(r, g, b)) {
+          const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          const factor = luminance / dg;
+
+          data[index] = Math.min(targetPink.r * factor, 255);
+          data[index + 1] = Math.min(targetPink.g * factor, 255);
+          data[index + 2] = Math.min(targetPink.b * factor, 255);
+        }
+      });
+    });
+
+    ctx.putImageData(imageData, 0, 0);
+    setProcessedImage(canvas.toDataURL());
+  };
+
+  const applyFilters = () => {
+    const imgElement = document.getElementById('processedImage');
+    if (imgElement) {
+      let filters = '';
+      if (adjustBrightness) {
+        filters += `brightness(${brightness}%) `;
+      }
+      if (adjustSaturation) {
+        filters += `saturate(${saturation}%) `;
+      }
+      imgElement.style.filter = filters.trim();
+    }
+  };
+
+  const isGreen = (r, g, b) => {
+    return g > r && g > b && (g > greenThreshold || (g - Math.min(r, b) > greenDifference));
+  };
+
+  const getDominantColor = (cluster, data) => {
+    const colorCounts = {};
+    cluster.forEach((index) => {
+      const r = data[index];
+      const g = data[index + 1];
+      const b = data[index + 2];
+      const colorKey = `${r},${g},${b}`;
+      colorCounts[colorKey] = (colorCounts[colorKey] || 0) + 1;
+    });
+
+    const dominantColor = Object.keys(colorCounts).reduce((a, b) =>
+      colorCounts[a] > colorCounts[b] ? a : b
+    );
+    return dominantColor.split(',').map(Number);
+  };
+
+  const findGreenClusters = (data, width, height) => {
+    const clusters = [];
+    const visited = new Set();
+
+    const getColorIndex = (x, y) => (y * width + x) * 4;
+
+    const isValidPixel = (x, y) => {
+      if (x < 0 || y < 0 || x >= width || y >= height) return false;
+      const index = getColorIndex(x, y);
+      return isGreen(data[index], data[index + 1], data[index + 2]);
+    };
+
+    const dfs = (x, y, cluster) => {
+      const stack = [[x, y]];
+
+      while (stack.length) {
+        const [cx, cy] = stack.pop();
+        const index = getColorIndex(cx, cy);
+
+        if (!visited.has(index)) {
+          visited.add(index);
+          cluster.push(index);
+
+          const neighbors = [
+            [cx + 1, cy],
+            [cx - 1, cy],
+            [cx, cy + 1],
+            [cx, cy - 1],
+          ];
+
+          for (const [nx, ny] of neighbors) {
+            if (isValidPixel(nx, ny) && !visited.has(getColorIndex(nx, ny))) {
+              stack.push([nx, ny]);
+            }
+          }
+        }
+      }
+    };
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const index = getColorIndex(x, y);
+        if (isGreen(data[index], data[index + 1], data[index + 2]) && !visited.has(index)) {
+          const cluster = [];
+          dfs(x, y, cluster);
+          clusters.push(cluster);
+        }
+      }
+    }
+
+    return clusters;
+  };
+
+  const toggleProcessedSize = () => {
+    setIsProcessedEnlarged(!isProcessedEnlarged);
+  };
+
+  const toggleOriginalSize = () => {
+    setIsOriginalEnlarged(!isOriginalEnlarged);
+  };
+
+  const updateThreshold = (value) => {
+    setGreenThreshold(value);
+    setInputThreshold(value);
+  };
+
+  const updateDifference = (value) => {
+    setGreenDifference(value);
+    setInputDifference(value);
+  };
+
+  const updatePinkLevel = (value) => {
+    setPinkLevel(value);
+    setInputPinkLevel(value);
+  };
+
+  const updateSaturation = (value) => {
+    setSaturation(value);
+    applyFilters();
+  };
+
+  const updateBrightness = (value) => {
+    setBrightness(value);
+    applyFilters();
+  };
+
+  const handleThresholdChange = (e) => {
+    const value = parseInt(e.target.value, 10);
+    setInputThreshold(value);
+    updateThreshold(value);
+  };
+
+  const handleDifferenceChange = (e) => {
+    const value = parseInt(e.target.value, 10);
+    setInputDifference(value);
+    updateDifference(value);
+  };
+
+  const handlePinkLevelChange = (e) => {
+    const value = parseInt(e.target.value, 10);
+    setInputPinkLevel(value);
+    updatePinkLevel(value);
+  };
+
+  const handleSaturationChange = (e) => {
+    const value = parseInt(e.target.value, 10);
+    updateSaturation(value);
+  };
+
+  const handleBrightnessChange = (e) => {
+    const value = parseInt(e.target.value, 10);
+    updateBrightness(value);
+  };
+
+  const handleAdjustSaturationToggle = () => {
+    setAdjustSaturation(!adjustSaturation);
+    applyFilters();
+  };
+
+  const handleAdjustBrightnessToggle = () => {
+    setAdjustBrightness(!adjustBrightness);
+    applyFilters();
+  };
+
+  const showTab = (tabId) => {
+    setActiveTab(tabId);
+  };
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <div className="container">
+      <h1>PepeToPork</h1>
+      <div className="tabs">
+        <div className={`tab ${activeTab === 'meme-tab' ? 'active' : ''}`} onClick={() => showTab('meme-tab')}>Meme Generator</div>
+        <div className={`tab ${activeTab === 'image-tab' ? 'active' : ''}`} onClick={() => showTab('image-tab')}>Image Processor</div>
+      </div>
+      <div id="image-tab" className={`tab-content ${activeTab === 'image-tab' ? 'active' : ''}`}>
+        <div className="form-group">
+          <input type="file" id="imageUpload" accept="image/*" onChange={handleImageUpload} />
+        </div>
+        <div className="form-group">
+          <label>Green Threshold: {inputThreshold}</label>
+          <input type="range" min="0" max="255" value={inputThreshold} onChange={handleThresholdChange} />
+          <div className="adjust-buttons">
+            <button onClick={() => updateThreshold(greenThreshold + 1)}>+</button>
+            <button onClick={() => updateThreshold(greenThreshold - 1)}>-</button>
+            <input type="number" value={inputThreshold} onChange={handleThresholdChange} />
+            <div className="color-display" style={{ backgroundColor: `rgb(0, ${inputThreshold}, 0)` }}></div>
+          </div>
+        </div>
+        <div className="form-group">
+          <label>Green Difference: {inputDifference}</label>
+          <input type="range" min="0" max="100" value={inputDifference} onChange={handleDifferenceChange} />
+          <div className="adjust-buttons">
+            <button onClick={() => updateDifference(greenDifference + 1)}>+</button>
+            <button onClick={() => updateDifference(greenDifference - 1)}>-</button>
+            <input type="number" value={inputDifference} onChange={handleDifferenceChange} />
+            <div className="color-display" style={{ backgroundColor: `rgb(0, ${inputDifference + 100}, 0)` }}></div>
+          </div>
+        </div>
+        <div className="form-group">
+          <label>Pink Level: {inputPinkLevel}</label>
+          <input type="range" min="0" max="255" value={inputPinkLevel} onChange={handlePinkLevelChange} />
+          <div className="adjust-buttons">
+            <button onClick={() => updatePinkLevel(pinkLevel + 1)}>+</button>
+            <button onClick={() => updatePinkLevel(pinkLevel - 1)}>-</button>
+            <input type="number" value={inputPinkLevel} onChange={handlePinkLevelChange} />
+            <div className="color-display" style={{ backgroundColor: `rgb(254, 167, ${inputPinkLevel})` }}></div>
+          </div>
+        </div>
+        <div className="form-group">
+          <label>
+            Adjust Saturation: 
+            <input type="checkbox" checked={adjustSaturation} onChange={handleAdjustSaturationToggle} />
+          </label>
+          {adjustSaturation && (
+            <div>
+              <label>Saturation: {saturation}%</label>
+              <input type="range" min="0" max="200" value={saturation} onChange={handleSaturationChange} />
+              <div className="adjust-buttons">
+                <button onClick={() => updateSaturation(saturation + 1)}>+</button>
+                <button onClick={() => updateSaturation(saturation - 1)}>-</button>
+                <input type="number" value={saturation} onChange={handleSaturationChange} />
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="form-group">
+          <label>
+            Adjust Brightness: 
+            <input type="checkbox" checked={adjustBrightness} onChange={handleAdjustBrightnessToggle} />
+          </label>
+          {adjustBrightness && (
+            <div>
+              <label>Brightness: {brightness}%</label>
+              <input type="range" min="0" max="200" value={brightness} onChange={handleBrightnessChange} />
+              <div className="adjust-buttons">
+                <button onClick={() => updateBrightness(brightness + 1)}>+</button>
+                <button onClick={() => updateBrightness(brightness - 1)}>-</button>
+                <input type="number" value={brightness} onChange={handleBrightnessChange} />
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="image-grid">
+          <div className={`image-box ${isOriginalEnlarged ? 'enlarged' : ''}`}>
+            <h3>Original Image</h3>
+            <canvas ref={canvasRef} style={{ display: 'none' }} />
+            {originalImage ? (
+              <img src={originalImage} alt="Original" />
+            ) : (
+              <div className="placeholder">No Original Image</div>
+            )}
+            <button onClick={toggleOriginalSize}>
+              {isOriginalEnlarged ? 'Minimize' : 'Enlarge'}
+            </button>
+          </div>
+          <div className={`image-box ${isProcessedEnlarged ? 'enlarged' : ''}`}>
+            <h3>Processed Image</h3>
+            {processedImage ? (
+              <img id="processedImage" src={processedImage} alt="Processed" />
+            ) : (
+              <div className="placeholder">No Processed Image</div>
+            )}
+            <button onClick={toggleProcessedSize}>
+              {isProcessedEnlarged ? 'Minimize' : 'Enlarge'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
