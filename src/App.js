@@ -1,46 +1,68 @@
-import React, { useState, useRef, useEffect } from 'react';
-import './App.css';
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { useDropzone } from "react-dropzone";
+import { FaCopy } from "react-icons/fa";
+import styles from "./PepeToPork.module.css";
 
-function App() {
+const PepeToPork = () => {
+  const defaultSettings = {
+    greenThreshold: 255,
+    greenDifference: 20,
+    saturation: 120,
+    brightness: 115,
+    targetColor: "green", // Default target color
+  };
+
   const [originalImage, setOriginalImage] = useState(null);
   const [processedImage, setProcessedImage] = useState(null);
-  const [activeTab, setActiveTab] = useState('image-tab');
   const [isOriginalEnlarged, setIsOriginalEnlarged] = useState(false);
   const [isProcessedEnlarged, setIsProcessedEnlarged] = useState(false);
-  const [greenThreshold, setGreenThreshold] = useState(100);
-  const [greenDifference, setGreenDifference] = useState(20);
-  const [pinkLevel, setPinkLevel] = useState(221);
-  const [saturation, setSaturation] = useState(100);
-  const [brightness, setBrightness] = useState(100);
-  const [adjustSaturation, setAdjustSaturation] = useState(false);
-  const [adjustBrightness, setAdjustBrightness] = useState(false);
-  const [inputThreshold, setInputThreshold] = useState(greenThreshold);
-  const [inputDifference, setInputDifference] = useState(greenDifference);
-  const [inputPinkLevel, setInputPinkLevel] = useState(pinkLevel);
+  const [greenThreshold, setGreenThreshold] = useState(
+    defaultSettings.greenThreshold
+  );
+  const [greenDifference, setGreenDifference] = useState(
+    defaultSettings.greenDifference
+  );
+  const [saturation, setSaturation] = useState(defaultSettings.saturation);
+  const [brightness, setBrightness] = useState(defaultSettings.brightness);
+  const [inputThreshold, setInputThreshold] = useState(
+    defaultSettings.greenThreshold
+  );
+  const [inputDifference, setInputDifference] = useState(
+    defaultSettings.greenDifference
+  );
+  const [targetColor, setTargetColor] = useState(defaultSettings.targetColor);
+  const [pinkColor, setPinkColor] = useState("#fea7dd"); // Default pink color for replacement
+  const [tweetText, setTweetText] = useState("");
+  const [tweetUrl, setTweetUrl] = useState("");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authUrl, setAuthUrl] = useState("");
   const canvasRef = useRef(null);
+  const copyCanvasRef = useRef(null);
 
-  useEffect(() => {
-    if (originalImage) {
-      convertGreenToPink();
-    }
-  }, [greenThreshold, greenDifference, pinkLevel, originalImage]);
-
-  useEffect(() => {
-    applyFilters();
-  }, [adjustSaturation, adjustBrightness, saturation, brightness]);
-
-  const handleImageUpload = (event) => {
-    const file = event.target.files[0];
+  const onDrop = useCallback((acceptedFiles) => {
+    const file = acceptedFiles[0];
     const reader = new FileReader();
     reader.onload = (e) => {
       setOriginalImage(e.target.result);
     };
     reader.readAsDataURL(file);
-  };
+  }, []);
 
-  const convertGreenToPink = () => {
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop });
+
+  useEffect(() => {
+    if (originalImage) {
+      convertColorToTarget();
+    }
+  }, [greenThreshold, greenDifference, pinkColor, originalImage, targetColor]);
+
+  useEffect(() => {
+    applyFilters();
+  }, [saturation, brightness]);
+
+  const convertColorToTarget = () => {
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     const image = new Image();
     image.src = originalImage;
     image.onload = () => {
@@ -52,28 +74,24 @@ function App() {
     canvas.width = image.width;
     canvas.height = image.height;
     ctx.drawImage(image, 0, 0);
-
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
 
-    const targetPink = { r: 254, g: 167, b: pinkLevel };
+    // Convert the targetColor from hex to RGB
+    const targetRGB = hexToRgb(pinkColor);
 
-    const clusters = findGreenClusters(data, canvas.width, canvas.height);
+    const clusters = findColorClusters(data, canvas.width, canvas.height);
     clusters.forEach((cluster) => {
       const [dr, dg, db] = getDominantColor(cluster, data);
-
       cluster.forEach((index) => {
         const r = data[index];
         const g = data[index + 1];
         const b = data[index + 2];
-
-        if (isGreen(r, g, b)) {
-          const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-          const factor = luminance / dg;
-
-          data[index] = Math.min(targetPink.r * factor, 255);
-          data[index + 1] = Math.min(targetPink.g * factor, 255);
-          data[index + 2] = Math.min(targetPink.b * factor, 255);
+        if (isTargetColor(r, g, b)) {
+          const factor = getFactor(targetColor, r, g, b, dr, dg, db);
+          data[index] = Math.min(targetRGB.r * factor, 255);
+          data[index + 1] = Math.min(targetRGB.g * factor, 255);
+          data[index + 2] = Math.min(targetRGB.b * factor, 255);
         }
       });
     });
@@ -82,22 +100,57 @@ function App() {
     setProcessedImage(canvas.toDataURL());
   };
 
+  const hexToRgb = (hex) => {
+    const bigint = parseInt(hex.slice(1), 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return { r, g, b };
+  };
+
+  const getFactor = (color, r, g, b, dr, dg, db) => {
+    switch (color) {
+      case "red":
+        return r / dr;
+      case "green":
+        return g / dg;
+      case "blue":
+        return b / db;
+      default:
+        return 1;
+    }
+  };
+
   const applyFilters = () => {
-    const imgElement = document.getElementById('processedImage');
+    const imgElement = document.getElementById("processedImage");
     if (imgElement) {
-      let filters = '';
-      if (adjustBrightness) {
-        filters += `brightness(${brightness}%) `;
-      }
-      if (adjustSaturation) {
-        filters += `saturate(${saturation}%) `;
-      }
+      let filters = "";
+      filters += `brightness(${brightness}%) `;
+      filters += `saturate(${saturation}%) `;
       imgElement.style.filter = filters.trim();
     }
   };
 
-  const isGreen = (r, g, b) => {
-    return g > r && g > b && (g > greenThreshold || (g - Math.min(r, b) > greenDifference));
+  const isTargetColor = (r, g, b) => {
+    if (targetColor === "green") {
+      return (
+        g > r &&
+        g > b &&
+        (g > greenThreshold || g - Math.min(r, b) > greenDifference)
+      );
+    } else if (targetColor === "red") {
+      return (
+        r > g &&
+        r > b &&
+        (r > greenThreshold || r - Math.min(g, b) > greenDifference)
+      );
+    } else if (targetColor === "blue") {
+      return (
+        b > r &&
+        b > g &&
+        (b > greenThreshold || b - Math.min(r, g) > greenDifference)
+      );
+    }
   };
 
   const getDominantColor = (cluster, data) => {
@@ -109,43 +162,35 @@ function App() {
       const colorKey = `${r},${g},${b}`;
       colorCounts[colorKey] = (colorCounts[colorKey] || 0) + 1;
     });
-
     const dominantColor = Object.keys(colorCounts).reduce((a, b) =>
       colorCounts[a] > colorCounts[b] ? a : b
     );
-    return dominantColor.split(',').map(Number);
+    return dominantColor.split(",").map(Number);
   };
 
-  const findGreenClusters = (data, width, height) => {
+  const findColorClusters = (data, width, height) => {
     const clusters = [];
     const visited = new Set();
-
     const getColorIndex = (x, y) => (y * width + x) * 4;
-
     const isValidPixel = (x, y) => {
       if (x < 0 || y < 0 || x >= width || y >= height) return false;
       const index = getColorIndex(x, y);
-      return isGreen(data[index], data[index + 1], data[index + 2]);
+      return isTargetColor(data[index], data[index + 1], data[index + 2]);
     };
-
     const dfs = (x, y, cluster) => {
       const stack = [[x, y]];
-
       while (stack.length) {
         const [cx, cy] = stack.pop();
         const index = getColorIndex(cx, cy);
-
         if (!visited.has(index)) {
           visited.add(index);
           cluster.push(index);
-
           const neighbors = [
             [cx + 1, cy],
             [cx - 1, cy],
             [cx, cy + 1],
             [cx, cy - 1],
           ];
-
           for (const [nx, ny] of neighbors) {
             if (isValidPixel(nx, ny) && !visited.has(getColorIndex(nx, ny))) {
               stack.push([nx, ny]);
@@ -154,18 +199,19 @@ function App() {
         }
       }
     };
-
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const index = getColorIndex(x, y);
-        if (isGreen(data[index], data[index + 1], data[index + 2]) && !visited.has(index)) {
+        if (
+          isTargetColor(data[index], data[index + 1], data[index + 2]) &&
+          !visited.has(index)
+        ) {
           const cluster = [];
           dfs(x, y, cluster);
           clusters.push(cluster);
         }
       }
     }
-
     return clusters;
   };
 
@@ -185,11 +231,6 @@ function App() {
   const updateDifference = (value) => {
     setGreenDifference(value);
     setInputDifference(value);
-  };
-
-  const updatePinkLevel = (value) => {
-    setPinkLevel(value);
-    setInputPinkLevel(value);
   };
 
   const updateSaturation = (value) => {
@@ -214,12 +255,6 @@ function App() {
     updateDifference(value);
   };
 
-  const handlePinkLevelChange = (e) => {
-    const value = parseInt(e.target.value, 10);
-    setInputPinkLevel(value);
-    updatePinkLevel(value);
-  };
-
   const handleSaturationChange = (e) => {
     const value = parseInt(e.target.value, 10);
     updateSaturation(value);
@@ -230,123 +265,317 @@ function App() {
     updateBrightness(value);
   };
 
-  const handleAdjustSaturationToggle = () => {
-    setAdjustSaturation(!adjustSaturation);
+  const handlePinkColorChange = (e) => {
+    setPinkColor(e.target.value);
+  };
+
+  const resetToDefaultSettings = () => {
+    setGreenThreshold(defaultSettings.greenThreshold);
+    setGreenDifference(defaultSettings.greenDifference);
+    setSaturation(defaultSettings.saturation);
+    setBrightness(defaultSettings.brightness);
+    setPinkColor("#fea7dd");
+    setInputThreshold(defaultSettings.greenThreshold);
+    setInputDifference(defaultSettings.greenDifference);
+    setTargetColor(defaultSettings.targetColor);
     applyFilters();
   };
 
-  const handleAdjustBrightnessToggle = () => {
-    setAdjustBrightness(!adjustBrightness);
-    applyFilters();
+  const handleClickOutside = (e) => {
+    if (isOriginalEnlarged || isProcessedEnlarged) {
+      if (!e.target.closest(`.${styles.imageBox}`)) {
+        setIsOriginalEnlarged(false);
+        setIsProcessedEnlarged(false);
+      }
+    }
   };
 
-  const showTab = (tabId) => {
-    setActiveTab(tabId);
+  useEffect(() => {
+    document.addEventListener("click", handleClickOutside);
+    return () => {
+      document.removeEventListener("click", handleClickOutside);
+    };
+  }, [isOriginalEnlarged, isProcessedEnlarged]);
+
+  const handleCopyImage = () => {
+    const canvas = copyCanvasRef.current;
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    img.src = processedImage;
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+
+      ctx.filter = `brightness(${brightness}%) saturate(${saturation}%)`;
+      ctx.drawImage(img, 0, 0);
+
+      canvas.toBlob((blob) => {
+        const item = new ClipboardItem({ "image/png": blob });
+        navigator.clipboard
+          .write([item])
+          .then(() => {
+            alert("Image copied to clipboard!");
+          })
+          .catch((err) => {
+            console.error("Failed to copy image: ", err);
+          });
+      });
+    };
   };
 
   return (
-    <div className="container">
-      <h1>PepeToPork</h1>
-      <div className="tabs">
-        <div className={`tab ${activeTab === 'meme-tab' ? 'active' : ''}`} onClick={() => showTab('meme-tab')}>Meme Generator</div>
-        <div className={`tab ${activeTab === 'image-tab' ? 'active' : ''}`} onClick={() => showTab('image-tab')}>Image Processor</div>
+    <div className={styles.pepeToPink}>
+      <h2>Color Converter</h2>
+      <div className={styles.uploadContainer} {...getRootProps()}>
+        <input {...getInputProps()} />
+        {isDragActive ? (
+          <p>Drop the files here ...</p>
+        ) : (
+          <p>Drag 'n' drop some files here, or click to select files</p>
+        )}
+        <button className={styles.uploadButton}>Choose File</button>
       </div>
-      <div id="image-tab" className={`tab-content ${activeTab === 'image-tab' ? 'active' : ''}`}>
-        <div className="form-group">
-          <input type="file" id="imageUpload" accept="image/*" onChange={handleImageUpload} />
-        </div>
-        <div className="form-group">
-          <label>Green Threshold: {inputThreshold}</label>
-          <input type="range" min="0" max="255" value={inputThreshold} onChange={handleThresholdChange} />
-          <div className="adjust-buttons">
-            <button onClick={() => updateThreshold(greenThreshold + 1)}>+</button>
-            <button onClick={() => updateThreshold(greenThreshold - 1)}>-</button>
-            <input type="number" value={inputThreshold} onChange={handleThresholdChange} />
-            <div className="color-display" style={{ backgroundColor: `rgb(0, ${inputThreshold}, 0)` }}></div>
-          </div>
-        </div>
-        <div className="form-group">
-          <label>Green Difference: {inputDifference}</label>
-          <input type="range" min="0" max="100" value={inputDifference} onChange={handleDifferenceChange} />
-          <div className="adjust-buttons">
-            <button onClick={() => updateDifference(greenDifference + 1)}>+</button>
-            <button onClick={() => updateDifference(greenDifference - 1)}>-</button>
-            <input type="number" value={inputDifference} onChange={handleDifferenceChange} />
-            <div className="color-display" style={{ backgroundColor: `rgb(0, ${inputDifference + 100}, 0)` }}></div>
-          </div>
-        </div>
-        <div className="form-group">
-          <label>Pink Level: {inputPinkLevel}</label>
-          <input type="range" min="0" max="255" value={inputPinkLevel} onChange={handlePinkLevelChange} />
-          <div className="adjust-buttons">
-            <button onClick={() => updatePinkLevel(pinkLevel + 1)}>+</button>
-            <button onClick={() => updatePinkLevel(pinkLevel - 1)}>-</button>
-            <input type="number" value={inputPinkLevel} onChange={handlePinkLevelChange} />
-            <div className="color-display" style={{ backgroundColor: `rgb(254, 167, ${inputPinkLevel})` }}></div>
-          </div>
-        </div>
-        <div className="form-group">
-          <label>
-            Adjust Saturation: 
-            <input type="checkbox" checked={adjustSaturation} onChange={handleAdjustSaturationToggle} />
-          </label>
-          {adjustSaturation && (
-            <div>
-              <label>Saturation: {saturation}%</label>
-              <input type="range" min="0" max="200" value={saturation} onChange={handleSaturationChange} />
-              <div className="adjust-buttons">
-                <button onClick={() => updateSaturation(saturation + 1)}>+</button>
-                <button onClick={() => updateSaturation(saturation - 1)}>-</button>
-                <input type="number" value={saturation} onChange={handleSaturationChange} />
-              </div>
-            </div>
+      <div className={styles.imageContainer}>
+        <div
+          className={`${styles.imageBox} ${
+            isOriginalEnlarged ? styles.enlarged : ""
+          }`}
+        >
+          <h3>Original Image</h3>
+          <canvas ref={canvasRef} style={{ display: "none" }} />
+          {originalImage ? (
+            <>
+              <img
+                src={originalImage}
+                alt="Original"
+                className={styles.image}
+              />
+              <FaCopy onClick={handleCopyImage} className={styles.copyIcon} />
+            </>
+          ) : (
+            <div className={styles.placeholder}>No Original Image</div>
           )}
+          <button onClick={toggleOriginalSize} className={styles.defaultButton}>
+            {isOriginalEnlarged ? "Minimize" : "Enlarge"}
+          </button>
         </div>
-        <div className="form-group">
-          <label>
-            Adjust Brightness: 
-            <input type="checkbox" checked={adjustBrightness} onChange={handleAdjustBrightnessToggle} />
-          </label>
-          {adjustBrightness && (
-            <div>
-              <label>Brightness: {brightness}%</label>
-              <input type="range" min="0" max="200" value={brightness} onChange={handleBrightnessChange} />
-              <div className="adjust-buttons">
-                <button onClick={() => updateBrightness(brightness + 1)}>+</button>
-                <button onClick={() => updateBrightness(brightness - 1)}>-</button>
-                <input type="number" value={brightness} onChange={handleBrightnessChange} />
-              </div>
-            </div>
+      </div>
+      <div className={styles.imageContainer}>
+        <div
+          className={`${styles.imageBox} ${
+            isProcessedEnlarged ? styles.enlarged : ""
+          }`}
+        >
+          <h3>Pork'd Image</h3>
+          {processedImage ? (
+            <>
+              <img
+                id="processedImage"
+                src={processedImage}
+                alt="Processed"
+                className={styles.image}
+              />
+              <FaCopy onClick={handleCopyImage} className={styles.copyIcon} />
+            </>
+          ) : (
+            <div className={styles.placeholder}>No Processed Image</div>
           )}
+          <button
+            onClick={toggleProcessedSize}
+            className={styles.enlargeButton}
+          >
+            {isProcessedEnlarged ? "Minimize" : "Enlarge"}
+          </button>
         </div>
-        <div className="image-grid">
-          <div className={`image-box ${isOriginalEnlarged ? 'enlarged' : ''}`}>
-            <h3>Original Image</h3>
-            <canvas ref={canvasRef} style={{ display: 'none' }} />
-            {originalImage ? (
-              <img src={originalImage} alt="Original" />
-            ) : (
-              <div className="placeholder">No Original Image</div>
-            )}
-            <button onClick={toggleOriginalSize}>
-              {isOriginalEnlarged ? 'Minimize' : 'Enlarge'}
+      </div>
+      <canvas ref={copyCanvasRef} style={{ display: "none" }} />
+      <div className={styles.slidersContainer}>
+        <div className={styles.targetGroup}>
+          <label>Target Color:</label>
+          <select
+            value={targetColor}
+            onChange={(e) => setTargetColor(e.target.value.toLowerCase())}
+            className={styles.select}
+          >
+            <option value="green">Green</option>
+            <option value="red">Red</option>
+            <option value="blue">Blue</option>
+          </select>
+        </div>
+        <div className={styles.formGroup}>
+          <div className={styles.labelColorContainer}>
+            <label>Conversion Color:</label>
+            <input
+              type="color"
+              value={pinkColor}
+              onChange={handlePinkColorChange}
+              className={styles.colorInput}
+            />
+          </div>
+        </div>
+        <div className={styles.formGroup}>
+          <div className={styles.labelColorContainer}>
+            <label>Target Threshold: {inputThreshold}</label>
+            <div
+              className={styles.colorDisplay}
+              style={{
+                backgroundColor:
+                  targetColor === "green"
+                    ? `rgb(0, ${inputThreshold}, 0)`
+                    : targetColor === "red"
+                    ? `rgb(${inputThreshold}, 0, 0)`
+                    : `rgb(0, 0, ${inputThreshold})`,
+              }}
+            ></div>
+          </div>
+          <div className={styles.controlsContainer}>
+            <input
+              type="range"
+              min="0"
+              max="255"
+              value={inputThreshold}
+              onChange={handleThresholdChange}
+              className={styles.slider}
+            />
+            <input
+              type="number"
+              value={inputThreshold}
+              onChange={handleThresholdChange}
+              className={styles.input}
+            />
+            <button
+              onClick={() => updateThreshold(greenThreshold + 1)}
+              className={styles.button}
+            >
+              +
+            </button>
+            <button
+              onClick={() => updateThreshold(greenThreshold - 1)}
+              className={styles.button}
+            >
+              -
             </button>
           </div>
-          <div className={`image-box ${isProcessedEnlarged ? 'enlarged' : ''}`}>
-            <h3>Processed Image</h3>
-            {processedImage ? (
-              <img id="processedImage" src={processedImage} alt="Processed" />
-            ) : (
-              <div className="placeholder">No Processed Image</div>
-            )}
-            <button onClick={toggleProcessedSize}>
-              {isProcessedEnlarged ? 'Minimize' : 'Enlarge'}
+        </div>
+        <div className={styles.formGroup}>
+          <div className={styles.labelColorContainer}>
+            <label>Target Difference: {inputDifference}</label>
+            <div
+              className={styles.colorDisplay}
+              style={{
+                backgroundColor:
+                  targetColor === "green"
+                    ? `rgb(0, ${inputDifference + 100}, 0)`
+                    : targetColor === "red"
+                    ? `rgb(${inputDifference + 100}, 0, 0)`
+                    : `rgb(0, 0, ${inputDifference + 100})`,
+              }}
+            ></div>
+          </div>
+          <div className={styles.controlsContainer}>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={inputDifference}
+              onChange={handleDifferenceChange}
+              className={styles.slider}
+            />
+            <input
+              type="number"
+              value={inputDifference}
+              onChange={handleDifferenceChange}
+              className={styles.input}
+            />
+            <button
+              onClick={() => updateDifference(greenDifference + 1)}
+              className={styles.button}
+            >
+              +
+            </button>
+            <button
+              onClick={() => updateDifference(greenDifference - 1)}
+              className={styles.button}
+            >
+              -
             </button>
           </div>
         </div>
+        <div className={styles.formGroup}>
+          <div className={styles.labelColorContainer}>
+            <label>Saturation: {saturation}%</label>
+          </div>
+          <div className={styles.controlsContainer}>
+            <input
+              type="range"
+              min="0"
+              max="200"
+              value={saturation}
+              onChange={handleSaturationChange}
+              className={styles.slider}
+            />
+            <input
+              type="number"
+              value={saturation}
+              onChange={handleSaturationChange}
+              className={styles.input}
+            />
+            <button
+              onClick={() => updateSaturation(saturation + 1)}
+              className={styles.button}
+            >
+              +
+            </button>
+            <button
+              onClick={() => updateSaturation(saturation - 1)}
+              className={styles.button}
+            >
+              -
+            </button>
+          </div>
+        </div>
+        <div className={styles.formGroup}>
+          <div className={styles.labelColorContainer}>
+            <label>Brightness: {brightness}%</label>
+          </div>
+          <div className={styles.controlsContainer}>
+            <input
+              type="range"
+              min="0"
+              max="200"
+              value={brightness}
+              onChange={handleBrightnessChange}
+              className={styles.slider}
+            />
+            <input
+              type="number"
+              value={brightness}
+              onChange={handleBrightnessChange}
+              className={styles.input}
+            />
+            <button
+              onClick={() => updateBrightness(brightness + 1)}
+              className={styles.button}
+            >
+              +
+            </button>
+            <button
+              onClick={() => updateBrightness(brightness - 1)}
+              className={styles.button}
+            >
+              -
+            </button>
+          </div>
+        </div>
+        <button
+          onClick={resetToDefaultSettings}
+          className={styles.defaultButton}
+        >
+          Default Settings
+        </button>
       </div>
     </div>
   );
-}
+};
 
-export default App;
+export default PepeToPork;
